@@ -10,7 +10,7 @@
 * [License](#license)
 
 ## About this repo
-This repo containes a Python Dash web application that provides visualization to different algorithm trading for learning purposes.
+This repo containes a Python Dash web application that provides visualization to different algorithm trading for learning purposes. More technical indicators will be updated soon.
 
 ## Acknowledgements
 * [Investopedia](https://www.investopedia.com/)
