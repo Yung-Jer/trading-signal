@@ -3,6 +3,42 @@ from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
+def generate_list_group_items(name_list): 
+    list_group_items = []
+    for i in range(len(name_list)):
+        if i == 0:
+            list_group_items.append(
+                dbc.ListGroupItem(
+                    name_list[0], 
+                    id={
+                        "type": "lg",
+                        "index": 1
+                    },
+                    style={
+                        "cursor": "pointer",
+                        "textDecoration": "none",
+                    },
+                    action=True,
+                    active=True,
+                ),
+            )
+        else:
+            list_group_items.append(
+                dbc.ListGroupItem(
+                    name_list[i],
+                    id={
+                        "type": "lg",
+                        "index": i+1
+                    },
+                    style={
+                        "cursor": "pointer",
+                        "textDecoration": "none",
+                    },
+                    action=True
+                ),
+            )
+    return list_group_items
+
 def generate_MACD_plot(df, a=12, b=26, c=9):
     close = df['Close']
 
@@ -80,6 +116,89 @@ def generate_MACD_plot(df, a=12, b=26, c=9):
                         """
                          - **Buy signal**: MACD rises above the signal line  
                          - **Sell signal**: MACD falls below the signal line  
+                        """,
+                        className="me-3"
+                    )
+                ],
+                color="#D7EAF8",
+                className="pt-3 pb-3 ps-3 pe-3 d-inline-block"
+            ),
+        ],
+        body=True,
+        className="mt-3",
+    )
+
+def generate_MA_plot(df, short_window=40, long_window=100):
+    close = df['Close']
+
+    df['Short_MA'] = close.rolling(window=short_window, min_periods=1, center=False).mean()
+    df['Long_MA'] = close.rolling(window=long_window, min_periods=1, center=False).mean()
+    df['Buy_Signal'] = df['Short_MA'] > df['Long_MA']
+    # Convert boolean values to True/False
+    df['Buy_Signal'] = df['Buy_Signal'].astype(bool)
+    # Identify the points where there is a change from a sell signal to a buy signal and vice versa
+    buy_points = df[(df['Buy_Signal'] == True) & (df['Buy_Signal'].shift(1) == False)]
+    sell_points = df[(df['Buy_Signal'] == False) & (df['Buy_Signal'].shift(1) == True)]
+
+    # Create subplots
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.6, 0.4], shared_xaxes=True, vertical_spacing=0.02)
+    # Close price
+    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], mode="lines", name="Close", opacity=0.7), row=1, col=1)
+    # MACD 
+    fig.add_trace(go.Scatter(x=df.index, y=df["Short_MA"], mode="lines", opacity=0.8, name="Short-term MA"), row=2, col=1)
+    # Signal line for MACD
+    fig.add_trace(go.Scatter(x=df.index, y=df["Long_MA"], mode="lines", opacity=0.8, name="Long-term MA"), row=2, col=1)
+    # Add up triangles for buy signals and sell signals at the identified points
+    fig.add_trace(go.Scatter(
+        x=buy_points.index,
+        y=buy_points['Close'],
+        mode='markers',
+        marker=dict(symbol='triangle-up', color='green', size=10),
+        name='Buy Signal'), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=sell_points.index,
+        y=sell_points['Close'],
+        mode='markers',
+        marker=dict(symbol='triangle-down', color='red', size=10),
+        name='Sell Signal'), row=1, col=1)
+
+    # Update y-axes label
+    fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+    fig.update_yaxes(title_text="Price ($)", row=2, col=1)
+    #  spike line hover extended to all subplots
+    fig.update_layout(hovermode="x unified")
+    fig.update_traces(xaxis='x1')
+
+    return dbc.Card(
+        [
+            html.H3("Moving Averages (MA)", className="ms-3"),
+            dbc.Row(
+                [
+                    dbc.Col([
+                        dbc.Label("Short-term period"),
+                        dbc.Input(placeholder="e.g. 40", type="number", value=short_window, id={"type": "ma-param", "index": 1}),
+                    ]),
+                    dbc.Col([
+                        dbc.Label("Long-term period"),
+                        dbc.Input(placeholder="e.g. 100", type="number", value=long_window, id={"type": "ma-param", "index": 2}),
+                    ]),
+                ],
+                className="ms-2 me-2"
+            ),
+            dbc.Spinner(dcc.Graph(figure=fig, className="mt-3 mb-3")),
+            dbc.Card(
+                [
+                    dbc.Container(
+                        [
+                            html.I(className="bi bi-info-circle"),
+                            html.B("Tips!", className="ms-2"),
+                        ],
+                        className="d-flex align-items-center mb-2",
+                    ), 
+                    dcc.Markdown(
+                        """
+                         - **Buy signal**: short-term MA crosses above the long-term MA (golden cross)  
+                         - **Sell signal**: short-term MA crosses below the long-term MA (dead/death cross) 
                         """,
                         className="me-3"
                     )

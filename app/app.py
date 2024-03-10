@@ -13,7 +13,7 @@ from dash_bootstrap_templates import load_figure_template
 from dash import Dash, Input, Output, State, dcc, html, callback, ALL, MATCH, callback_context
 
 from data import get_single_stock
-from components import generate_MACD_plot
+from components import generate_list_group_items, generate_MACD_plot, generate_MA_plot
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -119,33 +119,7 @@ navbar = dbc.Navbar(
 )
 
 list_group_tabs = dbc.ListGroup(
-    [
-        dbc.ListGroupItem(
-            "Chart Analysis", 
-            id={
-                "type": "lg",
-                "index": 1
-            },
-            style={
-                "cursor": "pointer",
-                "textDecoration": "none",
-            },
-            action=True,
-            active=True,
-        ),
-        dbc.ListGroupItem(
-            "MACD",
-            id={
-                "type": "lg",
-                "index": 2
-            },
-            style={
-                "cursor": "pointer",
-                "textDecoration": "none",
-            },
-            action=True
-        )
-    ],
+    generate_list_group_items(["Chart Analysis", "MACD", "MA"]),
     id="lg",
     flush=True,
     className="mt-4",
@@ -237,6 +211,50 @@ def toggle_navbar_collapse(n_clicks, is_open):
     return is_open
 
 @app.callback(
+    Output({"type": "lg", "index": ALL}, "active", allow_duplicate=True),
+    Input({"type": "lg", "index": ALL}, "n_clicks"),
+    prevent_initial_call=True
+)
+def change_active(n_clicks):
+    ctx = callback_context
+    input_id = json.loads(ctx.triggered[0]["prop_id"].split(".")[0])
+    idx = int(input_id["index"])
+    
+    bool_array = [False] * len(n_clicks)
+    bool_array[idx-1] = True
+
+    return bool_array
+
+@app.callback(
+    Output("df-store", "data"),
+    Output("title", "children"),
+    Output("dt-title", "children"),
+    Output("chart", "children", allow_duplicate=True),
+    Output({"type": "lg", "index": ALL}, "active", allow_duplicate=True),
+    Input({"type": "dropdown", "index": ALL}, "n_clicks"),
+    State({"type": "dropdown", "index": ALL}, "children"),
+    State({"type": "lg", "index": ALL}, "active"),
+    prevent_initial_call=True
+)
+def set_ticker_df(n_clicks, ticker_names, active_list):
+    ctx = callback_context
+    
+    triggered_id = json.loads(ctx.triggered[0]["prop_id"].split(".")[0])
+    idx = int(triggered_id["index"])
+
+    ticker_name = ticker_names[idx - 1]  # Adjust index to match dropdowns
+    df = get_single_stock(ticker_name, period="5y")
+    df.rename(columns={"Adj Close": "Adj_Close"}, inplace=True)
+    df.dropna(inplace=True)
+    return [
+        df.to_json(date_format="iso", orient="split"), 
+        ticker_name, 
+        f"Data as of {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.",
+        html.Div(),
+        [False] * len(active_list)
+    ]
+
+@app.callback(
     Output("chart", "children", allow_duplicate=True),
     Input({"type": "lg", "index": 1}, "n_clicks"),
     State("df-store", "data"),
@@ -294,7 +312,6 @@ def generate_tab_2_content(n_clicks, json_df):
     # Get adjusted close column
     return generate_MACD_plot(df_copy)
     
-
 @app.callback(
     Output("chart", "children", allow_duplicate=True),
     Input({"type": "macd-param", "index": ALL}, "value"),
@@ -316,50 +333,41 @@ def change_MACD_param(MACD_param, json_df, prev_figure):
     
     except Exception:
         return prev_figure
-
-@app.callback(
-    Output({"type": "lg", "index": ALL}, "active", allow_duplicate=True),
-    Input({"type": "lg", "index": ALL}, "n_clicks"),
-    prevent_initial_call=True
-)
-def change_active(n_clicks):
-    ctx = callback_context
-    input_id = json.loads(ctx.triggered[0]["prop_id"].split(".")[0])
-    idx = int(input_id["index"])
     
-    bool_array = [False] * len(n_clicks)
-    bool_array[idx-1] = True
-
-    return bool_array
-
 @app.callback(
-    Output("df-store", "data"),
-    Output("title", "children"),
-    Output("dt-title", "children"),
     Output("chart", "children", allow_duplicate=True),
-    Output({"type": "lg", "index": ALL}, "active", allow_duplicate=True),
-    Input({"type": "dropdown", "index": ALL}, "n_clicks"),
-    State({"type": "dropdown", "index": ALL}, "children"),
-    State({"type": "lg", "index": ALL}, "active"),
+    Input({"type": "lg", "index": 3}, "n_clicks"),
+    State("df-store", "data"),
     prevent_initial_call=True
 )
-def set_ticker_df(n_clicks, ticker_names, active_list):
-    ctx = callback_context
-    
-    triggered_id = json.loads(ctx.triggered[0]["prop_id"].split(".")[0])
-    idx = int(triggered_id["index"])
+def generate_tab_3_content(n_clicks, json_df):
+    # Read the JSON data into a pandas DataFrame
+    df = pd.read_json(json_df, orient='split')
+    df_copy = df.copy()
+    # Get adjusted close column
+    return generate_MA_plot(df_copy)
 
-    ticker_name = ticker_names[idx - 1]  # Adjust index to match dropdowns
-    df = get_single_stock(ticker_name, period="5y")
-    df.rename(columns={"Adj Close": "Adj_Close"}, inplace=True)
-    df.dropna(inplace=True)
-    return [
-        df.to_json(date_format="iso", orient="split"), 
-        ticker_name, 
-        f"Data as of {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.",
-        html.Div(),
-        [False] * len(active_list)
-    ]
+@app.callback(
+    Output("chart", "children", allow_duplicate=True),
+    Input({"type": "ma-param", "index": ALL}, "value"),
+    State("df-store", "data"),
+    State("chart", "children"),
+    prevent_initial_call=True
+)
+def change_MA_param(MA_param, json_df, prev_figure):
+    # Catch exception when users are typing the input for the MACD settings
+    # Return previous figure if there is any exception
+    try:
+        # Read the JSON data into a pandas DataFrame
+        df = pd.read_json(json_df, orient='split')
+        df_copy = df.copy()
+        short_window, long_window = MA_param
+        
+        new_figure = generate_MA_plot(df_copy, short_window, long_window)
+        return new_figure
+    
+    except Exception:
+        return prev_figure
 
 if __name__ == '__main__':
     app.run(debug=True)
