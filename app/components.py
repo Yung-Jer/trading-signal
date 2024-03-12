@@ -39,6 +39,72 @@ def generate_list_group_items(name_list):
             )
     return list_group_items
 
+def generate_line_chart_and_candlestick(df):
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.7, 0.3], shared_xaxes=True, vertical_spacing=0.02)
+    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], mode="lines", name="Close"), row=1, col=1)
+    fig.add_trace(go.Bar(x=df.index, y=df["Volume"], marker=dict(color='rgba(255, 0, 0, 0.9)'), name="Volume"), row=2, col=1)
+    # spike line hover extended to all subplots
+    fig.update_layout(hovermode="x unified")
+    # Update y-axis titles for the subplots
+    fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+    fig.update_yaxes(title_text="Volume (unit)", row=2, col=1)
+    fig.update_traces(xaxis='x1')
+
+    fig2 = go.Figure(
+        data=[
+            go.Candlestick(
+                x=df.index,
+                open=df['Open'],
+                high=df['High'],
+                low=df['Low'],
+                close=df['Close']
+            )
+        ]
+    )
+    fig2.update_layout(yaxis=dict(title="Price ($)"))
+    return dbc.Card(
+        [
+            html.H3("Line Chart", className="ms-3"),
+            dbc.Spinner(dcc.Graph(figure=fig, className="mt-3 mb-3")),
+            html.H3("Candlestick Chart", className="ms-3"),
+            dbc.Spinner(dcc.Graph(figure=fig2, className="mt-3 mb-3")),
+        ],
+        body=True,
+        className="mt-3",
+    )
+
+def generate_backtest_accordion():
+    return html.Div(
+        dbc.Accordion(
+            [
+                dbc.AccordionItem(
+                    [
+                        dbc.Row(
+                            [
+                                dbc.Col([
+                                    dbc.Label("Fast line period"),
+                                    dbc.Input(placeholder="e.g. 12", type="number", id={"type": "backtest-macd-param", "index": 1}),
+                                ]),
+                                dbc.Col([
+                                    dbc.Label("Slow line period"),
+                                    dbc.Input(placeholder="e.g. 26", type="number", id={"type": "backtest-macd-param", "index": 2}),
+                                ]),
+                                dbc.Col([
+                                    dbc.Label("Signal line period"),
+                                    dbc.Input(placeholder="e.g. 9", type="number", id={"type": "backtest-macd-param", "index": 3}),
+                                ])
+                            ],
+                            className="ms-2 me-2"
+                        ),
+                        dbc.Button("Run backtest", id="backtest-macd-button", className="ms-4 mt-3"),
+                    ],
+                    title="Backtest MACD",
+                ),
+            ],
+            start_collapsed=True,
+        )
+    )
+
 def generate_MACD_plot(df, a=12, b=26, c=9):
     close = df['Close']
 
@@ -210,3 +276,9 @@ def generate_MA_plot(df, short_window=40, long_window=100):
         body=True,
         className="mt-3",
     )
+
+def blank_figure():
+    fig = go.Figure(go.Scatter(x=[], y = []))
+    fig.update_layout(template = None)
+    
+    return fig
