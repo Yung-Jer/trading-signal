@@ -2,6 +2,8 @@
 ![Last commit][last-commit-shield]
 ![Language][language-shield]
 
+![](trading_signal.gif)
+
 <!-- TABLE OF CONTENTS -->
 ## Table of Contents
 
@@ -10,7 +12,7 @@
 * [License](#license)
 
 ## About this repo
-This repo containes a Python Dash web application that provides visualization to different algorithm trading for learning purposes. More technical indicators will be updated soon.
+This repo containes a Python Dash web application that provides visualization and backtesting functionalities to different algorithm trading for learning purposes. More technical indicators will be updated soon.
 
 ## Acknowledgements
 * [Investopedia](https://www.investopedia.com/)
