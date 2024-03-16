@@ -13,7 +13,7 @@ from dash_bootstrap_templates import load_figure_template
 from dash import Dash, Input, Output, State, dcc, html, callback, ALL, MATCH, callback_context
 
 from data import get_single_stock
-from components import generate_list_group_items, generate_MACD_plot, generate_MA_plot, generate_line_chart_and_candlestick, generate_backtest_accordion, blank_figure
+from components import generate_list_group_items, generate_MACD_plot, generate_MA_plot, generate_line_chart_and_candlestick, generate_backtest_accordion, blank_figure, generate_PSAR_plot
 from backtest import backtest_MACD
 import plotly.express as px
 import plotly.graph_objects as go
@@ -65,7 +65,7 @@ navbar = dbc.Navbar(
 )
 
 list_group_tabs = dbc.ListGroup(
-    generate_list_group_items(["Chart Analysis", "MACD", "MA"]),
+    generate_list_group_items(["Chart Analysis", "MACD", "MA", "Parabolic SAR"]),
     id="lg",
     flush=True,
     className="mt-4",
@@ -150,7 +150,7 @@ content = dbc.Row(
                         dbc.Card(
                             [
                                 generate_backtest_accordion(),
-                                html.Div(dbc.Spinner(dcc.Graph(className="mt-3 mb-3", id="backtest-output")))
+                                html.Div(dbc.Spinner(dcc.Graph(className="mt-3 mb-3")), id="backtest-output")
                             ]),
                         label="Backtesting"
                     )
@@ -210,7 +210,7 @@ def change_active(n_clicks):
     Output({"type": "lg", "index": ALL}, "active", allow_duplicate=True),
     Output("ticker-store", "data"),
     Output("period-store", "data"),
-    Output("backtest-output", "figure", allow_duplicate=True),
+    Output("backtest-output", "children", allow_duplicate=True),
     Input({"type": "ticker", "index": ALL}, "n_clicks"),
     Input({"type": "period", "index": ALL}, "n_clicks"),
     State({"type": "ticker", "index": ALL}, "children"),
@@ -252,7 +252,7 @@ def set_ticker_df(n_clicks_1, n_clicks_2, ticker_names, period_values, curr_tick
         [True if not i else False for i in range(len(active_list))],
         val_1,
         val_2,
-        blank_figure()
+        dbc.Spinner(dcc.Graph(figure=blank_figure(), className="mt-3 mb-3"))
     ]
 
 @app.callback(
@@ -371,7 +371,42 @@ def change_MA_param(MA_param, json_df, prev_figure):
         return prev_figure
     
 @app.callback(
-    Output("backtest-output", "figure"),
+    Output("chart", "children", allow_duplicate=True),
+    Input({"type": "lg", "index": 4}, "n_clicks"),
+    State("df-store", "data"),
+    prevent_initial_call=True
+)
+def generate_tab_4_content(n_clicks, json_df):
+    # Read the JSON data into a pandas DataFrame
+    df = pd.read_json(json_df, orient='split')
+    df_copy = df.copy()
+    # Get adjusted close column
+    return generate_PSAR_plot(df_copy)
+
+@app.callback(
+    Output("chart", "children", allow_duplicate=True),
+    Input({"type": "psar-param", "index": ALL}, "value"),
+    State("df-store", "data"),
+    State("chart", "children"),
+    prevent_initial_call=True
+)
+def change_PSAR_param(PSAR_param, json_df, prev_figure):
+    # Catch exception when users are typing the input for the MACD settings
+    # Return previous figure if there is any exception
+    try:
+        # Read the JSON data into a pandas DataFrame
+        df = pd.read_json(json_df, orient='split')
+        df_copy = df.copy()
+        initial_af, max_af = PSAR_param
+        
+        new_figure = generate_PSAR_plot(df_copy, initial_af, max_af)
+        return new_figure
+    
+    except Exception:
+        return prev_figure
+    
+@app.callback(
+    Output("backtest-output", "children", allow_duplicate=True),
     Input("backtest-macd-button", "n_clicks"),
     State({"type": "backtest-macd-param", "index": ALL}, "value"),
     State("ticker-store", "data"),
@@ -383,17 +418,17 @@ def generate_backtest_chart(n_clicks, MACD_param, ticker, period):
     df.rename(columns={"Adj Close": "Adj_Close"}, inplace=True)
     df.dropna(inplace=True)
     a, b, c = MACD_param
-    if not (a & b & c):
+    if not a or not b or not c:
         return dbc.Alert(
                     "Please specify all three MACD parameters.",
                     is_open=True,
                     duration=5000,
-                    className="mt-3 mb-3"
+                    className="mt-3 mb-3 ms-3 me-3"
                 )
 
     portfolio, fig = backtest_MACD(ticker, df, a, b, c)
     print(portfolio.tail(100))
-    return fig
+    return dbc.Spinner(dcc.Graph(figure=fig, className="mt-3 mb-3"))
 
 if __name__ == '__main__':
     app.run(debug=True)
