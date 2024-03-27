@@ -2,6 +2,44 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
 from dash import dcc, html
+from backtest import gen_MA_signal, gen_MACD_signal, gen_PSAR_signal
+
+input_config = {
+    "MACD": [
+        {
+            "label": "(MACD) Fast line period",
+            "placeholder": "e.g. 12",
+        },
+                    {
+            "label": "(MACD) Slow line period",
+            "placeholder": "e.g. 26",
+        },
+        {
+            "label": "(MACD) Signal line period",
+            "placeholder": "e.g. 9",
+        }
+    ],
+    "MA": [
+        {
+            "label": "(MA) Short term period",
+            "placeholder": "e.g. 40",
+        },
+                    {
+            "label": "(MA) Long term period",
+            "placeholder": "e.g. 100",
+        },
+    ],
+    "PSAR": [
+        {
+            "label": "(PSAR) Initial acceleration factor",
+            "placeholder": "e.g. 0.02",
+        },
+                    {
+            "label": "(PSAR) Max acceleration factor",
+            "placeholder": "e.g. 0.2",
+        },
+    ]
+}
 
 def generate_list_group_items(name_list): 
     list_group_items = []
@@ -73,48 +111,65 @@ def generate_line_chart_and_candlestick(df):
         className="mt-3",
     )
 
-def generate_backtest_accordion():
+def generate_strategy_and_input(strategy_list):
+    return [
+        dbc.Col([
+            dbc.Label("Strategy"),
+            dcc.Dropdown(
+                options=["MACD", "MA", "PSAR"],
+                value=strategy_list,
+                multi=True,
+                id="strategy-dropdown"
+            )],
+            width=2,
+        ), 
+        dbc.Col(
+            [
+                dbc.Row(
+                    [
+                        dbc.Col(
+                            [
+                                dbc.Label(input_config[strat][i]["label"]),
+                                dbc.Input(placeholder=input_config[strat][i]["placeholder"], type="number", id={"type": f"backtest-{strat}-param", "index": i+1})
+                            ],
+                            width=4
+                        ) for i in range(len(input_config[strat]))
+                    ], 
+                    className="mb-2"
+                ) for strat in strategy_list
+            ],
+            id="strategy-param",
+            width=10
+        )
+    ]
+    
+
+def generate_backtest_accordion(strategy_list):
+    strategy_and_input = generate_strategy_and_input(strategy_list)
     return html.Div(
         dbc.Accordion(
             [
                 dbc.AccordionItem(
                     [
                         dbc.Row(
-                            [
-                                dbc.Col([
-                                    dbc.Label("Fast line period"),
-                                    dbc.Input(placeholder="e.g. 12", type="number", id={"type": "backtest-macd-param", "index": 1}),
-                                ]),
-                                dbc.Col([
-                                    dbc.Label("Slow line period"),
-                                    dbc.Input(placeholder="e.g. 26", type="number", id={"type": "backtest-macd-param", "index": 2}),
-                                ]),
-                                dbc.Col([
-                                    dbc.Label("Signal line period"),
-                                    dbc.Input(placeholder="e.g. 9", type="number", id={"type": "backtest-macd-param", "index": 3}),
-                                ])
-                            ],
-                            className="ms-2 me-2"
+                            strategy_and_input,
+                            id="strategy-and-input",
+                            className="ms-2 me-2 mt-2"
                         ),
-                        dbc.Button("Run backtest", id="backtest-macd-button", className="ms-4 mt-3"),
+                        dbc.Row(dbc.Col(dbc.Button("Run backtest", id="backtest-strategy-button"), width={"width": 2, "offset": 10}, className="mt-4 mb-4")),
                     ],
-                    title="Backtest MACD",
+                    title="Backtest Strategy",
                 ),
             ],
-            start_collapsed=True,
+            # Always open the accordion item
+            active_item="item-0"
         )
     )
 
 def generate_MACD_plot(df, a=12, b=26, c=9):
-    close = df['Close']
+    df_copy = df.copy()
 
-    exp1 = close.ewm(span=a, adjust=False).mean()
-    exp2 = close.ewm(span=b, adjust=False).mean()
-    df['MACD'] = exp1 - exp2
-    df['Signal_Line'] = df['MACD'].ewm(span=c, adjust=False).mean()
-    df['Buy_Signal'] = df['MACD'] > df['Signal_Line']
-    # Convert boolean values to True/False
-    df['Buy_Signal'] = df['Buy_Signal'].astype(bool)
+    df = gen_MACD_signal(df_copy, a, b, c)
     # Identify the points where there is a change from a sell signal to a buy signal and vice versa
     buy_points = df[(df['Buy_Signal'] == True) & (df['Buy_Signal'].shift(1) == False)]
     sell_points = df[(df['Buy_Signal'] == False) & (df['Buy_Signal'].shift(1) == True)]
@@ -195,13 +250,10 @@ def generate_MACD_plot(df, a=12, b=26, c=9):
     )
 
 def generate_MA_plot(df, short_window=40, long_window=100):
-    close = df['Close']
+    df_copy = df.copy()
 
-    df['Short_MA'] = close.rolling(window=short_window, min_periods=1, center=False).mean()
-    df['Long_MA'] = close.rolling(window=long_window, min_periods=1, center=False).mean()
-    df['Buy_Signal'] = df['Short_MA'] > df['Long_MA']
-    # Convert boolean values to True/False
-    df['Buy_Signal'] = df['Buy_Signal'].astype(bool)
+    df = gen_MA_signal(df_copy, short_window, long_window)
+
     # Identify the points where there is a change from a sell signal to a buy signal and vice versa
     buy_points = df[(df['Buy_Signal'] == True) & (df['Buy_Signal'].shift(1) == False)]
     sell_points = df[(df['Buy_Signal'] == False) & (df['Buy_Signal'].shift(1) == True)]
@@ -278,95 +330,9 @@ def generate_MA_plot(df, short_window=40, long_window=100):
     )
 
 def generate_PSAR_plot(df, initial_af=0.02, max_af=0.2):
-    length = len(df)
-    array_dates = df.index.tolist()
-    array_high = df['High'].tolist()
-    array_low = df['Low'].tolist()
-    array_close = df['Close'].tolist()
+    df_copy = df.copy()
 
-    psar = df['Close'].copy()
-    psarbull = [None] * len(df)
-    psarbear = [None] * len(df)
-    
-    bull = True
-    af = initial_af # initialise acceleration factor
-
-    if length > 0:
-        ep = array_low[0] # extreme price
-        hp = array_high[0] # extreme high
-        lp = array_low[0] # extreme low
-
-    for i in range(2, len(df)):
-        if bull:
-            # Rising SAR
-            psar[i] = psar[i-1] + af * (hp - psar[i-1])
-        else:
-            # Falling SAR
-            psar[i] = psar[i-1] + af * (lp - psar[i-1])
-
-        reverse = False
-
-        # Check reversion point
-        if bull:
-            if array_low[i] < psar[i]:
-                bull = False
-                reverse = True
-                psar[i] = hp
-                lp = array_low[i]
-                af = initial_af
-        else:
-            if array_high[i] > psar[i]:
-                bull = True
-                reverse = True
-                psar[i] = lp
-                hp = array_high[i]
-                af = initial_af
-
-        if not reverse:
-            if bull:
-                # Extreme high makes a new high
-                if array_high[i] > hp:
-                    hp = array_high[i]
-                    af = min(af + initial_af, max_af)
-
-                # Check if SAR goes abov prior two periods' lows. 
-                # If so, use the lowest of the two for SAR.
-                if array_low[i-1] < psar[i]:
-                    psar[i] = array_low[i-1]
-                if array_low[i-2] < psar[i]:
-                    psar[i] = array_low[i-2]
-
-            else:
-                # Extreme low makes a new low
-                if array_low[i] < lp:
-                    lp = array_low[i]
-                    af = min(af + initial_af, max_af)
-
-                # Check if SAR goes below prior two periods' highs. 
-                # If so, use the highest of the two for SAR.
-                if array_high[i-1] > psar[i]:
-                    psar[i] = array_high[i-1]
-                if array_high[i-2] > psar[i]:
-                    psar[i] = array_high[i-2]
-
-        # Save rising SAR
-        if bull:
-            psarbull[i] = psar[i]
-        # Save falling SAR
-        else:
-            psarbear[i] = psar[i]
-
-    df['psar'] = psar
-    df['psarbull'] = psarbull
-    df['psarbear'] = psarbear
-
-    df['Buy_Signal'] = True
-    # Generate buy signal
-    df.loc[df['psarbull'].notnull(), 'Buy_Signal'] = True
-    # Generate sell signal
-    df.loc[df['psarbear'].notnull(), 'Buy_Signal'] = False
-    # Convert boolean values to True/False
-    df['Buy_Signal'] = df['Buy_Signal'].astype(bool)
+    df = gen_PSAR_signal(df_copy, initial_af, max_af)
     
     # Identify the points where there is a change from a sell signal to a buy signal and vice versa
     buy_points = df[(df['Buy_Signal'] == True) & (df['Buy_Signal'].shift(1) == False)]
@@ -405,7 +371,7 @@ def generate_PSAR_plot(df, initial_af=0.02, max_af=0.2):
 
     return dbc.Card(
         [
-            html.H3("Moving Average Convergence Divergence (MACD)", className="ms-3"),
+            html.H3("Parabolic Stop and Reverse (PSAR)", className="ms-3"),
             dbc.Row(
                 [
                     dbc.Col([

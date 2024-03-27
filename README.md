@@ -7,9 +7,15 @@
 <!-- TABLE OF CONTENTS -->
 ## Table of Contents
 
+* [Latest update](#latest-update)
 * [About this repo](#about-this-repo)
 * [Acknowledgements](#acknowledgements)
 * [License](#license)
+
+## Latest update
+1. New indicator: Parabolic Stop & Reverse (PSAR) has been implemented. 
+2. The backtest interface allows multiple strategies to be combined to predict the stock holdings.
+3. The changes in the total amount of portfolio, cash and holding values are shown over time.  
 
 ## About this repo
 This repo containes a Python Dash web application that provides visualization and backtesting functionalities to different algorithm trading for learning purposes. More technical indicators will be updated soon.

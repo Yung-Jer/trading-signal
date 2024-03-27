@@ -3,8 +3,8 @@ import os
 import re
 import sys
 import time
-import requests_cache
 import pandas as pd
+import numpy as np
 from io import StringIO
 import datetime
 
@@ -12,9 +12,24 @@ import dash_bootstrap_components as dbc
 from dash_bootstrap_templates import load_figure_template
 from dash import Dash, Input, Output, State, dcc, html, callback, ALL, MATCH, callback_context
 
+from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+
 from data import get_single_stock
-from components import generate_list_group_items, generate_MACD_plot, generate_MA_plot, generate_line_chart_and_candlestick, generate_backtest_accordion, blank_figure, generate_PSAR_plot
-from backtest import backtest_MACD
+from components import (
+    generate_list_group_items, 
+    generate_MACD_plot, 
+    generate_MA_plot, 
+    generate_line_chart_and_candlestick, 
+    generate_backtest_accordion, 
+    input_config,
+    blank_figure, 
+    generate_PSAR_plot,
+    generate_strategy_and_input
+)
+from backtest import backtest_MACD, backtest, gen_MA_signal, gen_MACD_signal, gen_PSAR_signal
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -149,7 +164,7 @@ content = dbc.Row(
                     dbc.Tab(
                         dbc.Card(
                             [
-                                generate_backtest_accordion(),
+                                html.Div(generate_backtest_accordion(["MACD"]), id="backtest-accordion"),
                                 html.Div(dbc.Spinner(dcc.Graph(className="mt-3 mb-3")), id="backtest-output")
                             ]),
                         label="Backtesting"
@@ -407,28 +422,78 @@ def change_PSAR_param(PSAR_param, json_df, prev_figure):
     
 @app.callback(
     Output("backtest-output", "children", allow_duplicate=True),
-    Input("backtest-macd-button", "n_clicks"),
-    State({"type": "backtest-macd-param", "index": ALL}, "value"),
+    Input("backtest-strategy-button", "n_clicks"),
+    State("strategy-dropdown", "value"),
+    State("strategy-param", "children"),
     State("ticker-store", "data"),
     State("period-store", "data"),
     prevent_initial_call=True
 )
-def generate_backtest_chart(n_clicks, MACD_param, ticker, period):
+def generate_backtest_chart(n_clicks, strategy_list, strategy_param_component, ticker, period):
     df = get_single_stock(ticker, period)
     df.rename(columns={"Adj Close": "Adj_Close"}, inplace=True)
+    df["Return"] = df["Close"]/df["Close"].shift(1)
+    df["Buy_Signal"] = np.where(df["Return"] > 1, 1, 0)
     df.dropna(inplace=True)
-    a, b, c = MACD_param
-    if not a or not b or not c:
+    strategy_param = {strat: [] for strat in strategy_list}
+    
+    try:
+        for ele in strategy_param_component:
+            for idx in range(len(ele["props"]["children"])):
+                strat = ele["props"]["children"][idx]["props"]["children"][1]["props"]["id"]["type"].split("-")[1]
+                val = ele["props"]["children"][idx]["props"]["children"][1]["props"]["value"]
+                strategy_param[strat].append(val)
+    except KeyError:
+        print(strategy_param)
         return dbc.Alert(
-                    "Please specify all three MACD parameters.",
-                    is_open=True,
-                    duration=5000,
-                    className="mt-3 mb-3 ms-3 me-3"
-                )
+            "Please specify all the strategy parameters.",
+            is_open=True,
+            duration=5000,
+            className="mt-3 mb-3 ms-3 me-3"
+        )
+    else:
+        print(strategy_param)
+        buy_signal_series = []
+        for strat in strategy_param:
+            if strat == "MACD":
+                df_copy = df.copy()
+                buy_signal_series.append(gen_MACD_signal(df_copy, *strategy_param[strat])["Buy_Signal"].tolist())
+            if strat == "MA":
+                df_copy = df.copy()
+                buy_signal_series.append(gen_MA_signal(df_copy, *strategy_param[strat])["Buy_Signal"].tolist())
+            if strat == "PSAR":
+                df_copy = df.copy()
+                buy_signal_series.append(gen_PSAR_signal(df_copy, *strategy_param[strat])["Buy_Signal"].tolist())
 
-    portfolio, fig = backtest_MACD(ticker, df, a, b, c)
-    print(portfolio.tail(100))
-    return dbc.Spinner(dcc.Graph(figure=fig, className="mt-3 mb-3"))
+        X = np.column_stack(buy_signal_series)
+        num_column = X.shape[1]
+        # Perform majority voting along the left columns
+        majority_vote = np.sum(X, axis=1)
+
+        # Define a threshold for majority voting
+        threshold = num_column  # Adjust as needed, for example, if 2 out of 3 are True, it's considered a majority
+
+        # Create the new column based on the majority voting result
+        new_column = (majority_vote >= threshold).astype(int)
+
+        df['Buy_Signal_Predict'] = new_column
+
+        portfolio, fig = backtest(ticker, df)
+        # print(portfolio.tail(20))
+        return dbc.Spinner(dcc.Graph(figure=fig, className="mt-3 mb-3"))
+
+        
+
+@app.callback(
+    Output("strategy-and-input", "children"),
+    Input("strategy-dropdown", "value"),
+    prevent_initial_call=True
+)
+def test_strategy(strategy_values):
+    strategy_and_input = generate_strategy_and_input(strategy_values)
+
+    return strategy_and_input
+    
 
 if __name__ == '__main__':
     app.run(debug=True)
