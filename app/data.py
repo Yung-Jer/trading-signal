@@ -3,8 +3,8 @@ import pandas as pd
 import datetime as dt
 import yfinance as yf
 
-def get_single_stock(ticker, period="10y"):
-    return yf.download(ticker, period=period)
+def get_stocks(tickers, period="10y"):
+    return yf.download(tickers, period=period)
 
 def get_returns_for_multiple_stocks(tickers: list, start_date: str, end_date: str) -> pd.DataFrame:
     '''

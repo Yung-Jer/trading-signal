@@ -1,8 +1,9 @@
 import plotly.graph_objects as go
+import numpy as np
 from plotly.subplots import make_subplots
 import dash_bootstrap_components as dbc
 from dash import dcc, html
-from backtest import gen_MA_signal, gen_MACD_signal, gen_PSAR_signal
+from backtest import gen_MA_signal, gen_MACD_signal, gen_PSAR_signal, gen_CCI_signal
 
 input_config = {
     "MACD": [
@@ -37,6 +38,16 @@ input_config = {
                     {
             "label": "(PSAR) Max acceleration factor",
             "placeholder": "e.g. 0.2",
+        },
+    ],
+    "CCI": [
+        {
+            "label": "(CCI) Window size",
+            "placeholder": "e.g. 20",
+        },
+                    {
+            "label": "(CCI) Constant",
+            "placeholder": "e.g. 0.015",
         },
     ]
 }
@@ -116,7 +127,7 @@ def generate_strategy_and_input(strategy_list):
         dbc.Col([
             dbc.Label("Strategy"),
             dcc.Dropdown(
-                options=["MACD", "MA", "PSAR"],
+                options=["MACD", "MA", "PSAR", "CCI"],
                 value=strategy_list,
                 multi=True,
                 id="strategy-dropdown"
@@ -399,6 +410,88 @@ def generate_PSAR_plot(df, initial_af=0.02, max_af=0.2):
                         """
                          - **Buy signal**: if falling SAR goes below the price  
                          - **Sell signal**: if rising SAR goes above the price  
+                        """,
+                        className="me-3"
+                    )
+                ],
+                color="#D7EAF8",
+                className="pt-3 pb-3 ps-3 pe-3 d-inline-block"
+            ),
+        ],
+        body=True,
+        className="mt-3",
+    )
+
+def generate_CCI_plot(df, window_size=20, constant=0.015):
+    df_copy = df.copy()
+
+    df = gen_CCI_signal(df_copy, window_size, constant)
+    
+    # Identify the points where there is a change from a sell signal to a buy signal and vice versa
+    buy_points = df[(df['CCI'] >= 100) & (df['CCI'].shift(1) < 100)]
+    sell_points = df[(df['CCI'] < 100) & (df['CCI'].shift(1) >= 100)]
+
+    # Create subplots
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.6, 0.4], shared_xaxes=True, vertical_spacing=0.02)
+    # Close price
+    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], mode="lines", name="Close", opacity=0.7), row=1, col=1)
+    # psar
+    fig.add_trace(go.Scatter(x=df.index, y=df["CCI"], mode="lines", opacity=0.8, name="CCI"), row=2, col=1)
+    # psanbull
+    fig.add_trace(go.Scatter(x=df.index, y=np.repeat(100, len(df.index)), mode="lines", opacity=0.8, name="CCI=100"), row=2, col=1)
+    # psarbear
+    fig.add_trace(go.Scatter(x=df.index, y=np.repeat(-100, len(df.index)), mode="lines", opacity=0.8, name="CCI=-100"), row=2, col=1)
+    # Add up triangles for buy signals and sell signals at the identified points
+    fig.add_trace(go.Scatter(
+        x=buy_points.index,
+        y=buy_points['Close'],
+        mode='markers',
+        marker=dict(symbol='triangle-up', color='green', size=10),
+        name='Buy Signal'), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=sell_points.index,
+        y=sell_points['Close'],
+        mode='markers',
+        marker=dict(symbol='triangle-down', color='red', size=10),
+        name='Sell Signal'), row=1, col=1)
+
+    # Update y-axes label
+    fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+    fig.update_yaxes(title_text="CCI", row=2, col=1)
+    #  spike line hover extended to all subplots
+    fig.update_layout(hovermode="x unified")
+    fig.update_traces(xaxis='x1')
+
+    return dbc.Card(
+        [
+            html.H3("Commodity Channel Index (CCI)", className="ms-3"),
+            dbc.Row(
+                [
+                    dbc.Col([
+                        dbc.Label("Window Size"),
+                        dbc.Input(placeholder="e.g. 20", type="number", value=window_size, id={"type": "cci-param", "index": 1}),
+                    ]),
+                    dbc.Col([
+                        dbc.Label("Constant"),
+                        dbc.Input(placeholder="e.g. 0.015", type="number", value=constant, id={"type": "cci-param", "index": 2}),
+                    ]),
+                ],
+                className="ms-2 me-2"
+            ),
+            dbc.Spinner(dcc.Graph(figure=fig, className="mt-3 mb-3")),
+            dbc.Card(
+                [
+                    dbc.Container(
+                        [
+                            html.I(className="bi bi-info-circle"),
+                            html.B("Tips!", className="ms-2"),
+                        ],
+                        className="d-flex align-items-center mb-2",
+                    ), 
+                    dcc.Markdown(
+                        """
+                         - **Buy signal**: when CCI surges above +100
+                         - **Sell signal**: when CCI plunges below -100
                         """,
                         className="me-3"
                     )

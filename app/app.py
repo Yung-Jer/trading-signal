@@ -17,19 +17,20 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 
-from data import get_single_stock
+from data import get_stocks
 from components import (
     generate_list_group_items, 
     generate_MACD_plot, 
-    generate_MA_plot, 
+    generate_MA_plot,
     generate_line_chart_and_candlestick, 
     generate_backtest_accordion, 
     input_config,
     blank_figure, 
     generate_PSAR_plot,
+    generate_CCI_plot,
     generate_strategy_and_input
 )
-from backtest import backtest_MACD, backtest, gen_MA_signal, gen_MACD_signal, gen_PSAR_signal
+from backtest import backtest, gen_MA_signal, gen_MACD_signal, gen_PSAR_signal, gen_CCI_signal
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -50,7 +51,7 @@ app = Dash(
     suppress_callback_exceptions=True
 )
 
-df = get_single_stock("AAPL", period="6mo")
+df = get_stocks("AAPL", period="6mo")
 df.rename(columns={"Adj Close": "Adj_Close"}, inplace=True)
 df.dropna(inplace=True)
 
@@ -80,7 +81,7 @@ navbar = dbc.Navbar(
 )
 
 list_group_tabs = dbc.ListGroup(
-    generate_list_group_items(["Chart Analysis", "MACD", "MA", "Parabolic SAR"]),
+    generate_list_group_items(["Chart Analysis", "MACD", "MA", "Parabolic SAR", "CCI"]),
     id="lg",
     flush=True,
     className="mt-4",
@@ -243,14 +244,14 @@ def set_ticker_df(n_clicks_1, n_clicks_2, ticker_names, period_values, curr_tick
 
     if ticker_or_period == "ticker":
         ticker_name = ticker_names[idx - 1]  # Adjust index to match dropdowns
-        df = get_single_stock(ticker_name, period=curr_period)
+        df = get_stocks(ticker_name, period=curr_period)
         # update back the ticker and period store
         val_1, val_2 = ticker_name, curr_period
         ticker_title, time_horizon = ticker_name, f"({curr_period})"
 
     else:
         period_value = period_values[idx - 1]  # Adjust index to match dropdowns
-        df = get_single_stock(curr_ticker, period=period_value)
+        df = get_stocks(curr_ticker, period=period_value)
         val_1, val_2 = curr_ticker, period_value
         ticker_title, time_horizon = curr_ticker, f"({period_value})"
 
@@ -276,7 +277,7 @@ def set_ticker_df(n_clicks_1, n_clicks_2, ticker_names, period_values, curr_tick
     State("df-store", "data"),
     prevent_initial_call=True
 )
-def generate_tab_1_content(n_clicks, json_df):
+def generate_chart_analysis_content(n_clicks, json_df):
     # Read the JSON data into a pandas DataFrame
     df = pd.read_json(json_df, orient='split')
     df_copy = df.copy()
@@ -321,7 +322,7 @@ def generate_tab_1_content(n_clicks, json_df):
     State("df-store", "data"),
     prevent_initial_call=True
 )
-def generate_tab_2_content(n_clicks, json_df):
+def generate_MACD_content(n_clicks, json_df):
     # Read the JSON data into a pandas DataFrame
     df = pd.read_json(json_df, orient='split')
     df_copy = df.copy()
@@ -356,7 +357,7 @@ def change_MACD_param(MACD_param, json_df, prev_figure):
     State("df-store", "data"),
     prevent_initial_call=True
 )
-def generate_tab_3_content(n_clicks, json_df):
+def generate_MA_content(n_clicks, json_df):
     # Read the JSON data into a pandas DataFrame
     df = pd.read_json(json_df, orient='split')
     df_copy = df.copy()
@@ -391,7 +392,7 @@ def change_MA_param(MA_param, json_df, prev_figure):
     State("df-store", "data"),
     prevent_initial_call=True
 )
-def generate_tab_4_content(n_clicks, json_df):
+def generate_PSAR_content(n_clicks, json_df):
     # Read the JSON data into a pandas DataFrame
     df = pd.read_json(json_df, orient='split')
     df_copy = df.copy()
@@ -421,17 +422,51 @@ def change_PSAR_param(PSAR_param, json_df, prev_figure):
         return prev_figure
     
 @app.callback(
+    Output("chart", "children", allow_duplicate=True),
+    Input({"type": "lg", "index": 5}, "n_clicks"),
+    State("df-store", "data"),
+    prevent_initial_call=True
+)
+def generate_CCI_content(n_clicks, json_df):
+    # Read the JSON data into a pandas DataFrame
+    df = pd.read_json(json_df, orient='split')
+    df_copy = df.copy()
+    # Get adjusted close column
+    return generate_CCI_plot(df_copy)
+
+@app.callback(
+    Output("chart", "children", allow_duplicate=True),
+    Input({"type": "cci-param", "index": ALL}, "value"),
+    State("df-store", "data"),
+    State("chart", "children"),
+    prevent_initial_call=True
+)
+def change_CCI_param(CCI_param, json_df, prev_figure):
+    # Catch exception when users are typing the input for the MACD settings
+    # Return previous figure if there is any exception
+    try:
+        # Read the JSON data into a pandas DataFrame
+        df = pd.read_json(json_df, orient='split')
+        df_copy = df.copy()
+        window_size, constant = CCI_param
+        
+        new_figure = generate_CCI_plot(df_copy, window_size, constant)
+        return new_figure
+    
+    except Exception:
+        return prev_figure
+    
+@app.callback(
     Output("backtest-output", "children", allow_duplicate=True),
     Input("backtest-strategy-button", "n_clicks"),
     State("strategy-dropdown", "value"),
     State("strategy-param", "children"),
-    State("ticker-store", "data"),
-    State("period-store", "data"),
+    State("df-store", "data"),
     prevent_initial_call=True
 )
-def generate_backtest_chart(n_clicks, strategy_list, strategy_param_component, ticker, period):
-    df = get_single_stock(ticker, period)
-    df.rename(columns={"Adj Close": "Adj_Close"}, inplace=True)
+def generate_backtest_chart(n_clicks, strategy_list, strategy_param_component, json_df):
+    # Read the JSON data into a pandas DataFrame
+    df = pd.read_json(json_df, orient='split').copy()
     df["Return"] = df["Close"]/df["Close"].shift(1)
     df["Buy_Signal"] = np.where(df["Return"] > 1, 1, 0)
     df.dropna(inplace=True)
@@ -471,18 +506,18 @@ def generate_backtest_chart(n_clicks, strategy_list, strategy_param_component, t
         majority_vote = np.sum(X, axis=1)
 
         # Define a threshold for majority voting
-        threshold = num_column  # Adjust as needed, for example, if 2 out of 3 are True, it's considered a majority
+        threshold = 2/3 * num_column  # Adjust as needed, for example, if 2 out of 3 are True, it's considered a majority
+        print(f"Threshold: {threshold}")
 
         # Create the new column based on the majority voting result
         new_column = (majority_vote >= threshold).astype(int)
 
         df['Buy_Signal_Predict'] = new_column
 
-        portfolio, fig = backtest(ticker, df)
+        portfolio, fig = backtest(df)
         # print(portfolio.tail(20))
         return dbc.Spinner(dcc.Graph(figure=fig, className="mt-3 mb-3"))
 
-        
 
 @app.callback(
     Output("strategy-and-input", "children"),
