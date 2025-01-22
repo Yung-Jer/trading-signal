@@ -8,7 +8,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import yfinance as yf
 from backtest import (
-    backtest,
     gen_CCI_signal,
     gen_MA_signal,
     gen_MACD_signal,
@@ -36,6 +35,7 @@ from dash import (
     callback_context,
     dcc,
     html,
+    no_update,
 )
 from dash_bootstrap_templates import load_figure_template
 from flask_caching import Cache
@@ -81,17 +81,19 @@ def download_stock(ticker, start_date, end_date=None):
     # Cache timeout set to 1 day
     @cache.memoize(timeout=60 * 15)
     def download_stock_helper(ticker, start_date, end_date):
-        return yf.download(ticker, start_date, end_date)
+        df = yf.download(ticker, start_date, end_date)
+        df.columns = df.columns.get_level_values(0)
+        return df
 
     return download_stock_helper(ticker, start_date, end_date)
 
 
 today = datetime.date.today()
 one_year_ago = today - datetime.timedelta(days=365)
-half_year_ago = today - datetime.timedelta(days=185)
+half_year_ago = today - datetime.timedelta(days=180)
 
 
-df = download_stock("AAPL", one_year_ago, half_year_ago)
+df = download_stock("VOO", one_year_ago, half_year_ago)
 df.rename(columns={"Adj Close": "Adj_Close"}, inplace=True)
 df.dropna(inplace=True)
 
@@ -120,10 +122,12 @@ navbar = dbc.Navbar(
     dark=True,
 )
 
+INDICATOR_LIST = ["Chart Analysis", "Moving Average (MA)", "MACD", "Parabolic SAR", "CCI"]
+
 list_group_tabs = (
     dbc.ListGroup(
         generate_list_group_items(
-            ["Chart Analysis", "MACD", "MA", "Parabolic SAR", "CCI"]
+            INDICATOR_LIST
         ),
         id="lg",
         flush=True,
@@ -137,47 +141,28 @@ line_candlestick_chart = generate_line_chart_and_candlestick(df)
 content = dbc.Row(
     dbc.Col(
         [
-            html.Div(
+            dbc.Row(
                 [
-                    html.Div(
+                    dbc.Col(
                         [
-                            dcc.Store(
-                                id="ticker-store", data="AAPL", storage_type="memory"
-                            ),
-                            dbc.DropdownMenu(
-                                label="Ticker",
-                                menu_variant="dark",
-                                children=[
-                                    dbc.DropdownMenuItem(
-                                        "AAPL", id={"type": "ticker", "index": 1}
-                                    ),
-                                    dbc.DropdownMenuItem(
-                                        "TSLA", id={"type": "ticker", "index": 2}
-                                    ),
-                                    dbc.DropdownMenuItem(
-                                        "VOOV", id={"type": "ticker", "index": 3}
-                                    ),
-                                    dbc.DropdownMenuItem(
-                                        "IVV", id={"type": "ticker", "index": 4}
-                                    ),
-                                    dbc.DropdownMenuItem(
-                                        "VTI", id={"type": "ticker", "index": 5}
-                                    ),
-                                ],
+                            dbc.Label(html.B("Symbol: ")),
+                            dbc.Input(id="ticker-input", debounce=True),
+                        ]
+                    ),
+                    dbc.Col(
+                        [
+                            dbc.Label(html.B("Date Range: ")),
+                            html.Br(),
+                            dcc.DatePickerRange(
+                                id="date-picker-range",
+                                start_date=one_year_ago,
+                                end_date=today,
+                                display_format="YYYY-MM-DD",
+                                clearable=True,
+                                with_portal=True,
                             ),
                         ],
-                        className="d-inline-block align-items-center",
-                    ),
-                    html.Div(
-                        dcc.DatePickerRange(
-                            id="date-picker-range",
-                            start_date=one_year_ago,
-                            end_date=half_year_ago,
-                            display_format="YYYY-MM-DD",
-                            clearable=True,
-                            with_portal=True,
-                        ),
-                        className="d-inline-block align-items-center ms-3",
+                        className="ms-3",
                     ),
                 ],
                 className="mt-3",
@@ -186,7 +171,7 @@ content = dbc.Row(
             html.Div(
                 [
                     html.H3(
-                        children="AAPL",
+                        children="VOO",
                         className="d-inline-block align-items-center",
                         id="ticker-title",
                     ),
@@ -201,6 +186,7 @@ content = dbc.Row(
                 children=f"Data as of {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.",
                 id="dt-title",
             ),
+            dbc.Alert("No such ticker found!", id="ticker-warning", color="warning", is_open=False),
             dbc.Tabs(
                 [
                     dbc.Tab(
@@ -220,21 +206,6 @@ content = dbc.Row(
                             body=True,
                         ),
                         label="Visualization",
-                    ),
-                    dbc.Tab(
-                        dbc.Card(
-                            [
-                                html.Div(
-                                    generate_backtest_accordion(["MACD"]),
-                                    id="backtest-accordion",
-                                ),
-                                html.Div(
-                                    dbc.Spinner(dcc.Graph(className="mt-3 mb-3")),
-                                    id="backtest-output",
-                                ),
-                            ]
-                        ),
-                        label="Backtesting",
                     ),
                 ]
             ),
@@ -256,6 +227,9 @@ def serve_layout():
                 id="df-store",
                 data=df.to_json(date_format="iso", orient="split"),
                 storage_type="memory",
+            ),
+            dcc.Store(
+                id="ticker-store", data="VOO", storage_type="memory"
             ),
             dbc.Container(content, fluid=True, className="ps-5 pe-5"),
         ]
@@ -289,45 +263,31 @@ def change_active(n_clicks):
     Output("chart", "children", allow_duplicate=True),
     Output({"type": "lg", "index": ALL}, "active", allow_duplicate=True),
     Output("ticker-store", "data"),
-    Output("backtest-output", "children", allow_duplicate=True),
-    Input({"type": "ticker", "index": ALL}, "n_clicks"),
+    Output("ticker-warning", "is_open"),
     Input("date-picker-range", "start_date"),
     Input("date-picker-range", "end_date"),
-    State({"type": "ticker", "index": ALL}, "children"),
-    State("date-picker-range", "start_date"),
-    State("date-picker-range", "end_date"),
+    Input("ticker-input", "value"),
     State("ticker-store", "data"),
     State({"type": "lg", "index": ALL}, "active"),
     prevent_initial_call=True,
 )
 def set_ticker_df(
-    n_clicks,
     start_date,
     end_date,
-    ticker_names,
-    curr_start_date,
-    curr_end_date,
+    value,
     curr_ticker,
     active_list,
 ):
-    if any(n_clicks):
-        ctx = callback_context
-        triggered_id = json.loads(ctx.triggered[0]["prop_id"].split(".")[0])
-        idx = int(triggered_id["index"])
-        ticker_name = ticker_names[idx - 1]  # Adjust index to match dropdowns
-        df = download_stock(ticker_name, curr_start_date, curr_end_date)
-        # update back the ticker and period store
-        updated_ticker = ticker_name
-        curr_period = (datetime.datetime.strptime(curr_end_date, "%Y-%m-%d") - datetime.datetime.strptime(curr_start_date, "%Y-%m-%d")).days
-        ticker_title, time_horizon = ticker_name, f"({curr_period} days)" if curr_period > 1 else f"({curr_period} day)"
-    else:
-        df = download_stock(curr_ticker, start_date, end_date)
-        updated_ticker = curr_ticker
-        period_value = (datetime.datetime.strptime(end_date, "%Y-%m-%d") - datetime.datetime.strptime(start_date, "%Y-%m-%d")).days
-        ticker_title, time_horizon = curr_ticker, f"({period_value} days)" if period_value > 1 else f"({period_value} day)"
+    df = download_stock(value, start_date, end_date)
+    if len(df) == 0:
+        return [no_update] * 5 + [[True if not i else False for i in range(len(active_list))], curr_ticker, True]
+    # update back the ticker and period store
+    updated_ticker = value
+    curr_period = (datetime.datetime.strptime(end_date, "%Y-%m-%d") - datetime.datetime.strptime(start_date, "%Y-%m-%d")).days
+    ticker_title, time_horizon = value, f"({curr_period} days)" if curr_period > 1 else f"({curr_period} day)"
 
-    df.rename(columns={"Adj Close": "Adj_Close"}, inplace=True)
-    df.dropna(inplace=True)
+    df = df.rename(columns={"Adj Close": "Adj_Close"}).copy()
+    df = df.dropna()
 
     return [
         df.to_json(date_format="iso", orient="split"),
@@ -337,13 +297,13 @@ def set_ticker_df(
         generate_line_chart_and_candlestick(df),
         [True if not i else False for i in range(len(active_list))],
         updated_ticker,
-        dbc.Spinner(dcc.Graph(figure=blank_figure(), className="mt-3 mb-3")),
+        False
     ]
 
 
 @app.callback(
     Output("chart", "children", allow_duplicate=True),
-    Input({"type": "lg", "index": 1}, "n_clicks"),
+    Input({"type": "lg", "index": INDICATOR_LIST.index("Chart Analysis")+1}, "n_clicks"),
     State("df-store", "data"),
     prevent_initial_call=True,
 )
@@ -359,7 +319,6 @@ def generate_chart_analysis_content(n_clicks, json_df):
         row=1,
         col=1,
     )
-    # fig.add_trace(go.Scatter(x=df.index, y=df["Moving_Average_26"], mode="lines", name="Moving Average (26 days)"), row=1, col=1)
     fig.add_trace(
         go.Bar(
             x=df_copy.index,
@@ -404,7 +363,7 @@ def generate_chart_analysis_content(n_clicks, json_df):
 
 @app.callback(
     Output("chart", "children", allow_duplicate=True),
-    Input({"type": "lg", "index": 2}, "n_clicks"),
+    Input({"type": "lg", "index": INDICATOR_LIST.index("MACD")+1}, "n_clicks"),
     State("df-store", "data"),
     prevent_initial_call=True,
 )
@@ -441,7 +400,7 @@ def change_MACD_param(MACD_param, json_df, prev_figure):
 
 @app.callback(
     Output("chart", "children", allow_duplicate=True),
-    Input({"type": "lg", "index": 3}, "n_clicks"),
+    Input({"type": "lg", "index": INDICATOR_LIST.index("Moving Average (MA)")+1}, "n_clicks"),
     State("df-store", "data"),
     prevent_initial_call=True,
 )
@@ -478,7 +437,7 @@ def change_MA_param(MA_param, json_df, prev_figure):
 
 @app.callback(
     Output("chart", "children", allow_duplicate=True),
-    Input({"type": "lg", "index": 4}, "n_clicks"),
+    Input({"type": "lg", "index": INDICATOR_LIST.index("Parabolic SAR")+1}, "n_clicks"),
     State("df-store", "data"),
     prevent_initial_call=True,
 )
@@ -515,7 +474,7 @@ def change_PSAR_param(PSAR_param, json_df, prev_figure):
 
 @app.callback(
     Output("chart", "children", allow_duplicate=True),
-    Input({"type": "lg", "index": 5}, "n_clicks"),
+    Input({"type": "lg", "index": INDICATOR_LIST.index("CCI")+1}, "n_clicks"),
     State("df-store", "data"),
     prevent_initial_call=True,
 )
@@ -550,97 +509,97 @@ def change_CCI_param(CCI_param, json_df, prev_figure):
         return prev_figure
 
 
-@app.callback(
-    Output("backtest-output", "children", allow_duplicate=True),
-    Input("backtest-strategy-button", "n_clicks"),
-    State("strategy-dropdown", "value"),
-    State("strategy-param", "children"),
-    State("df-store", "data"),
-    prevent_initial_call=True,
-)
-def generate_backtest_chart(n_clicks, strategy_list, strategy_param_component, json_df):
-    # Read the JSON data into a pandas DataFrame
-    df = pd.read_json(StringIO(json_df), orient="split").copy()
-    df["Return"] = df["Close"] / df["Close"].shift(1)
-    df["Buy_Signal"] = np.where(df["Return"] > 1, 1, 0)
-    df.dropna(inplace=True)
-    strategy_param = {strat: [] for strat in strategy_list}
+# @app.callback(
+#     Output("backtest-output", "children", allow_duplicate=True),
+#     Input("backtest-strategy-button", "n_clicks"),
+#     State("strategy-dropdown", "value"),
+#     State("strategy-param", "children"),
+#     State("df-store", "data"),
+#     prevent_initial_call=True,
+# )
+# def generate_backtest_chart(n_clicks, strategy_list, strategy_param_component, json_df):
+#     # Read the JSON data into a pandas DataFrame
+#     df = pd.read_json(StringIO(json_df), orient="split").copy()
+#     df["Return"] = df["Close"] / df["Close"].shift(1)
+#     df["Buy_Signal"] = np.where(df["Return"] > 1, 1, 0)
+#     df.dropna(inplace=True)
+#     strategy_param = {strat: [] for strat in strategy_list}
 
-    try:
-        for ele in strategy_param_component:
-            for idx in range(len(ele["props"]["children"])):
-                strat = ele["props"]["children"][idx]["props"]["children"][1]["props"][
-                    "id"
-                ]["type"].split("-")[1]
-                val = ele["props"]["children"][idx]["props"]["children"][1]["props"][
-                    "value"
-                ]
-                strategy_param[strat].append(val)
-    except KeyError:
-        print(strategy_param)
-        return dbc.Alert(
-            "Please specify all the strategy parameters.",
-            is_open=True,
-            duration=5000,
-            className="mt-3 mb-3 ms-3 me-3",
-        )
-    else:
-        print(strategy_param)
-        buy_signal_series = []
-        for strat in strategy_param:
-            if strat == "MACD":
-                df_copy = df.copy()
-                buy_signal_series.append(
-                    gen_MACD_signal(df_copy, *strategy_param[strat])[
-                        "Buy_Signal"
-                    ].tolist()
-                )
-            if strat == "MA":
-                df_copy = df.copy()
-                buy_signal_series.append(
-                    gen_MA_signal(df_copy, *strategy_param[strat])[
-                        "Buy_Signal"
-                    ].tolist()
-                )
-            if strat == "PSAR":
-                df_copy = df.copy()
-                buy_signal_series.append(
-                    gen_PSAR_signal(df_copy, *strategy_param[strat])[
-                        "Buy_Signal"
-                    ].tolist()
-                )
+#     try:
+#         for ele in strategy_param_component:
+#             for idx in range(len(ele["props"]["children"])):
+#                 strat = ele["props"]["children"][idx]["props"]["children"][1]["props"][
+#                     "id"
+#                 ]["type"].split("-")[1]
+#                 val = ele["props"]["children"][idx]["props"]["children"][1]["props"][
+#                     "value"
+#                 ]
+#                 strategy_param[strat].append(val)
+#     except KeyError:
+#         print(strategy_param)
+#         return dbc.Alert(
+#             "Please specify all the strategy parameters.",
+#             is_open=True,
+#             duration=5000,
+#             className="mt-3 mb-3 ms-3 me-3",
+#         )
+#     else:
+#         print(strategy_param)
+#         buy_signal_series = []
+#         for strat in strategy_param:
+#             if strat == "MACD":
+#                 df_copy = df.copy()
+#                 buy_signal_series.append(
+#                     gen_MACD_signal(df_copy, *strategy_param[strat])[
+#                         "Buy_Signal"
+#                     ].tolist()
+#                 )
+#             if strat == "MA":
+#                 df_copy = df.copy()
+#                 buy_signal_series.append(
+#                     gen_MA_signal(df_copy, *strategy_param[strat])[
+#                         "Buy_Signal"
+#                     ].tolist()
+#                 )
+#             if strat == "PSAR":
+#                 df_copy = df.copy()
+#                 buy_signal_series.append(
+#                     gen_PSAR_signal(df_copy, *strategy_param[strat])[
+#                         "Buy_Signal"
+#                     ].tolist()
+#                 )
 
-        X = np.column_stack(buy_signal_series)
-        num_column = X.shape[1]
-        # Perform majority voting along the left columns
-        majority_vote = np.sum(X, axis=1)
+#         X = np.column_stack(buy_signal_series)
+#         num_column = X.shape[1]
+#         # Perform majority voting along the left columns
+#         majority_vote = np.sum(X, axis=1)
 
-        # Define a threshold for majority voting
-        threshold = (
-            2 / 3 * num_column
-        )  # Adjust as needed, for example, if 2 out of 3 are True, it's considered a majority
-        print(f"Threshold: {threshold}")
+#         # Define a threshold for majority voting
+#         threshold = (
+#             2 / 3 * num_column
+#         )  # Adjust as needed, for example, if 2 out of 3 are True, it's considered a majority
+#         print(f"Threshold: {threshold}")
 
-        # Create the new column based on the majority voting result
-        new_column = (majority_vote >= threshold).astype(int)
+#         # Create the new column based on the majority voting result
+#         new_column = (majority_vote >= threshold).astype(int)
 
-        df["Buy_Signal_Predict"] = new_column
+#         df["Buy_Signal_Predict"] = new_column
 
-        portfolio, fig = backtest(df)
-        # print(portfolio.tail(20))
-        return dbc.Spinner(dcc.Graph(figure=fig, className="mt-3 mb-3"))
+#         portfolio, fig = backtest(df)
+#         # print(portfolio.tail(20))
+#         return dbc.Spinner(dcc.Graph(figure=fig, className="mt-3 mb-3"))
 
 
-@app.callback(
-    Output("strategy-and-input", "children"),
-    Input("strategy-dropdown", "value"),
-    prevent_initial_call=True,
-)
-def test_strategy(strategy_values):
-    strategy_and_input = generate_strategy_and_input(strategy_values)
+# @app.callback(
+#     Output("strategy-and-input", "children"),
+#     Input("strategy-dropdown", "value"),
+#     prevent_initial_call=True,
+# )
+# def test_strategy(strategy_values):
+#     strategy_and_input = generate_strategy_and_input(strategy_values)
 
-    return strategy_and_input
+#     return strategy_and_input
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run()
